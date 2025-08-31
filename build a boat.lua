@@ -1,26 +1,23 @@
--- // Custom Settings
 getgenv().TreasureAutoFarm = {
     Enabled = true,
     Teleport = 3.40,
     TimeBetweenRuns = 6
 }
 
--- // Services
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 
--- // Vars
 local LocalPlayer = Players.LocalPlayer
 local screenGui = nil
 local autoFarmRunning = false
 local autoFarmRun = 1
+local movementBlockConnection = nil
+local inputConnections = {}
 
--- // GUI Creation Function
 local function createGUI()
     if screenGui then
         screenGui:Destroy()
@@ -31,8 +28,6 @@ local function createGUI()
     screenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.ResetOnSpawn = false
-
-    -- Main Frame
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
     mainFrame.Size = UDim2.new(0, 200, 0, 150)
@@ -41,19 +36,16 @@ local function createGUI()
     mainFrame.BackgroundTransparency = 0.2
     mainFrame.BorderSizePixel = 0
     
-    -- Apply rounded corners
     local UICorner = Instance.new("UICorner")
     UICorner.CornerRadius = UDim.new(0, 8)
     UICorner.Parent = mainFrame
     
-    -- Apply shadow effect
     local UIStroke = Instance.new("UIStroke")
     UIStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     UIStroke.Color = Color3.fromRGB(60, 60, 70)
     UIStroke.Thickness = 2
     UIStroke.Parent = mainFrame
 
-    -- Header Label
     local headerLabel = Instance.new("TextLabel")
     headerLabel.Name = "HeaderLabel"
     headerLabel.Size = UDim2.new(1, 0, 0, 30)
@@ -66,13 +58,12 @@ local function createGUI()
     headerLabel.TextSize = 16
     headerLabel.Font = Enum.Font.GothamBold
     headerLabel.Parent = mainFrame
-    
-    -- Header corner rounding
+
     local headerCorner = Instance.new("UICorner")
     headerCorner.CornerRadius = UDim.new(0, 8)
     headerCorner.Parent = headerLabel
 
-    -- Toggle Button
+
     local toggleButton = Instance.new("TextButton")
     toggleButton.Name = "ToggleButton"
     toggleButton.Size = UDim2.new(0.8, 0, 0, 40)
@@ -85,12 +76,12 @@ local function createGUI()
     toggleButton.Font = Enum.Font.Gotham
     toggleButton.Parent = mainFrame
     
-    -- Toggle button rounded corners
+
     local toggleCorner = Instance.new("UICorner")
     toggleCorner.CornerRadius = UDim.new(0, 6)
     toggleCorner.Parent = toggleButton
 
-    -- Status Indicator
+
     local statusLabel = Instance.new("TextLabel")
     statusLabel.Name = "StatusLabel"
     statusLabel.Size = UDim2.new(0.8, 0, 0, 25)
@@ -102,7 +93,7 @@ local function createGUI()
     statusLabel.Font = Enum.Font.Gotham
     statusLabel.Parent = mainFrame
 
-    -- Toggle button functionality
+
     toggleButton.MouseButton1Click:Connect(function()
         getgenv().TreasureAutoFarm.Enabled = not getgenv().TreasureAutoFarm.Enabled
         
@@ -112,10 +103,13 @@ local function createGUI()
         else
             statusLabel.Text = "Status: Disabled"
             statusLabel.TextColor3 = Color3.fromRGB(200, 100, 100)
+            
+
+            unlockPlayerMovements()
         end
     end)
 
-    -- Make GUI draggable
+
     local dragging
     local dragInput
     local dragStart
@@ -157,52 +151,71 @@ local function createGUI()
     return screenGui
 end
 
--- // Function to completely block player movements
-local function blockPlayerMovements(block)
-    if block then
-        -- Disable all movement inputs
-        local function blockInput(input)
-            if input.UserInputType == Enum.UserInputType.Keyboard then
-                return true
-            elseif input.UserInputType == Enum.UserInputType.Gamepad1 then
-                return true
-            elseif input.UserInputType == Enum.UserInputType.Touch then
-                return true
-            end
-            return false
-        end
-        
-        -- Block all input
-        UserInputService.InputBegan:Connect(function(input)
-            if blockInput(input) then
-                input:Disallow()
-            end
-        end)
-        
-        -- Force character to stay in place by continuously setting velocity to zero
-        local movementBlockConnection
-        movementBlockConnection = RunService.Heartbeat:Connect(function()
-            if autoFarmRunning and LocalPlayer.Character then
-                local humanoid = LocalPlayer.Character:FindFirstChild("Humanoid")
-                local rootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                
-                if humanoid and rootPart then
-                    -- Completely stop any movement
-                    humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-                    rootPart.Velocity = Vector3.new(0, 0, 0)
-                    rootPart.RotVelocity = Vector3.new(0, 0, 0)
-                    
-                    -- Cancel any jump attempts
-                    humanoid.Jump = false
-                end
-            else
-                movementBlockConnection:Disconnect()
-            end
-        end)
+
+local function unlockPlayerMovements()
+
+    if movementBlockConnection then
+        movementBlockConnection:Disconnect()
+        movementBlockConnection = nil
+    end
+    
+    for _, connection in pairs(inputConnections) do
+        connection:Disconnect()
+    end
+    inputConnections = {}
+    
+
+    local character = LocalPlayer.Character
+    if character and character:FindFirstChild("Humanoid") then
+        local humanoid = character.Humanoid
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Running, true)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
+        humanoid.Jump = false
     end
 end
 
--- // Welcome Notification Function
+
+local function blockPlayerMovementsDuringAutoFarm()
+
+    unlockPlayerMovements()
+    
+
+    inputConnections.keyboard = UserInputService.InputBegan:Connect(function(input)
+        if getgenv().TreasureAutoFarm.Enabled and autoFarmRunning then
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                local key = input.KeyCode
+                if key == Enum.KeyCode.W or key == Enum.KeyCode.A or 
+                   key == Enum.KeyCode.S or key == Enum.KeyCode.D or
+                   key == Enum.KeyCode.Space then
+                    input:Disallow()
+                end
+            end
+        end
+    end)
+    
+
+    movementBlockConnection = RunService.Heartbeat:Connect(function()
+        if getgenv().TreasureAutoFarm.Enabled and autoFarmRunning and LocalPlayer.Character then
+            local humanoid = LocalPlayer.Character:FindFirstChild("Humanoid")
+            local rootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            
+            if humanoid and rootPart then
+
+                humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+                rootPart.Velocity = Vector3.new(0, 0, 0)
+                rootPart.RotVelocity = Vector3.new(0, 0, 0)
+                
+
+                humanoid.Jump = false
+            end
+        elseif not getgenv().TreasureAutoFarm.Enabled then
+
+            unlockPlayerMovements()
+        end
+    end)
+end
+
 local function showWelcomeNotification()
     local welcomeGui = Instance.new("ScreenGui")
     welcomeGui.Name = "WelcomeNotification"
@@ -248,14 +261,12 @@ local function showWelcomeNotification()
 
     notificationFrame.Parent = welcomeGui
 
-    -- Animation: Slide in
     local slideIn = TweenService:Create(
         notificationFrame,
         TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
         {Position = UDim2.new(0, 20, 1, -20)}
     )
-    
-    -- Animation: Slide out after delay
+
     local slideOut = TweenService:Create(
         notificationFrame,
         TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
@@ -271,12 +282,15 @@ local function showWelcomeNotification()
     end)
 end
 
--- // Auto Farm Function with movement lock
 local function autoFarm(currentRun)
+    if not getgenv().TreasureAutoFarm.Enabled then return end
+    
     autoFarmRunning = true
-    blockPlayerMovements(true)
+    blockPlayerMovementsDuringAutoFarm()
     
     local Character = LocalPlayer.Character
+    if not Character then return end
+    
     local NormalStages = Workspace.BoatStages.NormalStages
 
     for i = 1, 10 do
@@ -302,11 +316,12 @@ local function autoFarm(currentRun)
         print("Teleporting to the end")
         repeat 
             wait()
-            Character.HumanoidRootPart.CFrame = NormalStages.TheEnd.GoldenChest.Trigger.CFrame
+            if Character and Character:FindFirstChild("HumanoidRootPart") then
+                Character.HumanoidRootPart.CFrame = NormalStages.TheEnd.GoldenChest.Trigger.CFrame
+            end
         until Lighting.ClockTime ~= 35 or not getgenv().TreasureAutoFarm.Enabled
     end
 
-    -- Wait until you have respawned
     if getgenv().TreasureAutoFarm.Enabled then
         local Respawned = false
         local Connection
@@ -324,28 +339,27 @@ local function autoFarm(currentRun)
     end
     
     autoFarmRunning = false
-    blockPlayerMovements(false)
+    unlockPlayerMovements()
 end
 
--- // Initialize GUI and welcome message
 createGUI()
 showWelcomeNotification()
 
--- // Handle character respawns to recreate GUI if needed
 LocalPlayer.CharacterAdded:Connect(function(character)
-    wait(1) -- Small delay to ensure character is fully loaded
+    wait(1) 
     if not screenGui or not screenGui.Parent then
         createGUI()
     end
 end)
 
--- // Main loop
 spawn(function()
     while wait() do
         if getgenv().TreasureAutoFarm.Enabled then
             print("Initialising Auto Farm: Run " .. autoFarmRun)
             autoFarm(autoFarmRun)
             autoFarmRun = autoFarmRun + 1
+        else
+            unlockPlayerMovements()
         end
     end
 end)
